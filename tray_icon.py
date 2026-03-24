@@ -27,9 +27,10 @@ def _create_icon(letter, bg_color):
 
 
 class TrayIcon:
-    def __init__(self):
+    def __init__(self, on_open_settings=None):
         self._icon_vn = _create_icon('V', '#2E7D32')   # Green
         self._icon_en = _create_icon('E', '#757575')    # Gray
+        self._on_open_settings = on_open_settings
         self._tray = pystray.Icon(
             'myvnkey',
             icon=self._icon_vn if config.vietnamese_mode else self._icon_en,
@@ -41,6 +42,7 @@ class TrayIcon:
                     checked=lambda _: config.vietnamese_mode,
                 ),
                 pystray.Menu.SEPARATOR,
+                pystray.MenuItem('Settings...', self._open_settings),
                 pystray.MenuItem('Exit', self._exit),
             ),
         )
@@ -52,6 +54,10 @@ class TrayIcon:
     def _toggle_vietnamese(self, icon, item):
         config.vietnamese_mode = not config.vietnamese_mode
         self.update_icon()
+
+    def _open_settings(self, icon, item):
+        if self._on_open_settings:
+            self._on_open_settings()
 
     def _exit(self, icon, item):
         self._tray.stop()
