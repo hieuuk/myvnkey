@@ -1,35 +1,30 @@
 """System tray icon for MyVNKey."""
 
+import os
+import sys
+
 import pystray
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image
 
 import config
 
 
-def _create_icon(letter, bg_color):
-    """Generate a simple tray icon with a letter and background color."""
-    size = 64
-    img = Image.new('RGB', (size, size), bg_color)
-    draw = ImageDraw.Draw(img)
-    # Try to use a system font, fall back to default
-    try:
-        font = ImageFont.truetype("arial.ttf", 40)
-    except (OSError, IOError):
-        font = ImageFont.load_default()
-    # Center the letter
-    bbox = draw.textbbox((0, 0), letter, font=font)
-    text_w = bbox[2] - bbox[0]
-    text_h = bbox[3] - bbox[1]
-    x = (size - text_w) // 2
-    y = (size - text_h) // 2 - bbox[1]
-    draw.text((x, y), letter, fill='white', font=font)
-    return img
+def _get_asset_path(filename):
+    """Get path to an asset file, works both in dev and PyInstaller builds."""
+    if getattr(sys, '_MEIPASS', None):
+        return os.path.join(sys._MEIPASS, 'assets', filename)
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets', filename)
+
+
+def _load_icon(filename):
+    """Load a tray icon from an asset PNG file."""
+    return Image.open(_get_asset_path(filename))
 
 
 class TrayIcon:
     def __init__(self, on_open_settings=None):
-        self._icon_vn = _create_icon('V', '#2E7D32')   # Green
-        self._icon_en = _create_icon('E', '#757575')    # Gray
+        self._icon_vn = _load_icon('v.png')
+        self._icon_en = _load_icon('e.png')
         self._on_open_settings = on_open_settings
         self._tray = pystray.Icon(
             'myvnkey',
