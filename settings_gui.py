@@ -2,7 +2,7 @@
 
 import threading
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 
 import config
 from app_monitor import get_foreground_info
@@ -197,8 +197,24 @@ def _run_settings_window():
         config.save_config()
         root.destroy()
 
+    def export_config():
+        path = filedialog.asksaveasfilename(
+            parent=root,
+            title='Export Config',
+            defaultextension='.json',
+            filetypes=[('JSON files', '*.json'), ('All files', '*.*')],
+            initialfile='myvnkey-config.json',
+        )
+        if path:
+            try:
+                config.export_config(path)
+                messagebox.showinfo('Export', f'Config exported to:\n{path}', parent=root)
+            except OSError as e:
+                messagebox.showerror('Export Failed', str(e), parent=root)
+
     ttk.Button(frame_actions, text='Toggle Mode', command=toggle_selected).pack(side='left', padx=(0, 5))
     ttk.Button(frame_actions, text='Remove', command=remove_selected).pack(side='left', padx=(0, 5))
+    ttk.Button(frame_actions, text='Export Config', command=export_config).pack(side='left', padx=(0, 5))
     ttk.Button(frame_actions, text='Save && Close', command=save_and_close).pack(side='right')
 
     root.mainloop()

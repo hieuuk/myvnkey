@@ -74,6 +74,19 @@ def save_config():
         pass
 
 
+def export_config(path):
+    """Export current config to the given file path."""
+    data = {
+        'app_rules': app_rules,
+        'default_mode': default_mode,
+        'beep_on_switch': beep_on_switch,
+        'switch_key': switch_key,
+        'autorun': autorun,
+    }
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+
 # ── Autorun (Windows registry) ──────────────────────────────────────────────
 
 _REGISTRY_KEY = r'Software\Microsoft\Windows\CurrentVersion\Run'
