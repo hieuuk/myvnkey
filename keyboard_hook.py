@@ -1,7 +1,8 @@
 """Global keyboard hook for Vietnamese Telex input using pynput.
 
-Uses a non-suppressed listener. Simulated events are tracked via a skip
-counter so the hook ignores its own injected keystrokes.
+Uses a non-suppressed listener. Simulated events are detected via the
+Windows LLKHF_INJECTED flag (passed by pynput as the ``injected``
+parameter) so the hook ignores its own SendInput keystrokes.
 """
 
 import threading
@@ -26,13 +27,14 @@ class KeyboardHandler:
     def __init__(self, on_mode_change=None):
         self.controller = Controller()
         self.buffer = []
-        self._skip_events = 0
         self._pressed_keys = set()
         self._on_mode_change = on_mode_change
         self._listener = None
         self._lock = threading.Lock()
         # Track last transform for retroactive undo
         self._last_transform = None  # {'key': str, 'old_buffer': list}
+        # Buffer history stack for restoring context after word breaks
+        self._buffer_history = []  # list of (buffer_snapshot, last_transform)
 
     def start(self):
         """Start the keyboard listener (blocking)."""
@@ -48,17 +50,15 @@ class KeyboardHandler:
         if self._listener:
             self._listener.stop()
 
-    def _on_press(self, key):
+    def _on_press(self, key, injected=False):
+        if injected:
+            return
+
         total_bs = 0
         new_text = ''
         need_replace = False
 
         with self._lock:
-            # Skip events that we injected ourselves
-            if self._skip_events > 0:
-                self._skip_events -= 1
-                return
-
             # Track pressed keys for hotkey detection
             self._pressed_keys.add(key)
 
@@ -71,21 +71,30 @@ class KeyboardHandler:
 
             if char is None:
                 # Special key (Enter, Backspace, arrows, etc.)
-                if key == Key.backspace and self.buffer:
-                    self.buffer.pop()
+                if key == Key.backspace:
+                    if self.buffer:
+                        self.buffer.pop()
+                    elif self._buffer_history:
+                        # Backspace on empty buffer: user deleted back into
+                        # the previous word — restore its context.
+                        self.buffer, self._last_transform = self._buffer_history.pop()
                 elif key in (Key.enter, Key.tab, Key.space):
+                    self._push_history()
                     self.buffer.clear()
                     self._last_transform = None
                 else:
                     if key not in (Key.shift, Key.shift_r, Key.ctrl_l, Key.ctrl_r,
                                    Key.alt_l, Key.alt_r, Key.alt_gr, Key.caps_lock,
                                    Key.cmd, Key.cmd_r):
+                        # Hard break (arrows, escape, etc.): clear everything
                         self.buffer.clear()
+                        self._buffer_history.clear()
                         self._last_transform = None
                 return
 
             # Word-break character
             if char in config.WORD_BREAK_CHARS:
+                self._push_history()
                 self.buffer.clear()
                 self._last_transform = None
                 return
@@ -116,7 +125,6 @@ class KeyboardHandler:
                     # Erase what's on screen (old visible + the char that just passed through)
                     total_bs = len(old_buffer) + 1
                     new_text = ''.join(reverted)
-                    self._skip_events = total_bs + len(new_text)
                     need_replace = True
                 # If no retroactive undo needed, just fall through (need_replace stays False)
             else:
@@ -129,17 +137,24 @@ class KeyboardHandler:
                 if diff_start < 0:
                     diff_start = 0
                 new_text = ''.join(new_buffer[diff_start:])
-
-                # Skip counter for our injected events
-                self._skip_events = total_bs + len(new_text)
                 need_replace = True
 
         # Release lock before sending keys
         if need_replace:
             self._replace_keystroke(total_bs, new_text)
 
-    def _on_release(self, key):
+    def _on_release(self, key, injected=False):
+        if injected:
+            return
         self._pressed_keys.discard(key)
+
+    def _push_history(self):
+        """Save current buffer to history stack (if non-empty)."""
+        if self.buffer:
+            self._buffer_history.append((self.buffer[:], self._last_transform))
+            # Limit history depth
+            if len(self._buffer_history) > 5:
+                self._buffer_history.pop(0)
 
     def _check_toggle(self):
         """Check if the configured switch key is pressed."""
