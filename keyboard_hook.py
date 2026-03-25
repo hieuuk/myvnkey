@@ -33,8 +33,6 @@ class KeyboardHandler:
         self._lock = threading.Lock()
         # Track last transform for retroactive undo
         self._last_transform = None  # {'key': str, 'old_buffer': list}
-        # Save buffer on word-break so backspace can restore context
-        self._committed_buffer = []
 
     def start(self):
         """Start the keyboard listener (blocking)."""
@@ -73,34 +71,21 @@ class KeyboardHandler:
 
             if char is None:
                 # Special key (Enter, Backspace, arrows, etc.)
-                if key == Key.backspace:
-                    if self.buffer:
-                        self.buffer.pop()
-                    elif self._committed_buffer:
-                        # Backspace on empty buffer after word-break:
-                        # user deleted the space, restore previous word context
-                        self.buffer = self._committed_buffer[:]
-                        self._committed_buffer = []
+                if key == Key.backspace and self.buffer:
+                    self.buffer.pop()
                 elif key in (Key.enter, Key.tab, Key.space):
-                    # Soft break: save buffer for possible restore
-                    if self.buffer:
-                        self._committed_buffer = self.buffer[:]
                     self.buffer.clear()
                     self._last_transform = None
                 else:
                     if key not in (Key.shift, Key.shift_r, Key.ctrl_l, Key.ctrl_r,
                                    Key.alt_l, Key.alt_r, Key.alt_gr, Key.caps_lock,
                                    Key.cmd, Key.cmd_r):
-                        # Hard break (arrows, escape, etc.): clear everything
                         self.buffer.clear()
-                        self._committed_buffer = []
                         self._last_transform = None
                 return
 
             # Word-break character
             if char in config.WORD_BREAK_CHARS:
-                if self.buffer:
-                    self._committed_buffer = self.buffer[:]
                 self.buffer.clear()
                 self._last_transform = None
                 return
