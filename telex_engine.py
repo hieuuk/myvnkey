@@ -1,5 +1,7 @@
 """Core Telex transformation engine for Vietnamese Unicode typing."""
 
+from __future__ import annotations
+
 # Tone indices: 0=no tone, 1=sắc, 2=huyền, 3=hỏi, 4=ngã, 5=nặng
 TONE_KEYS = {'s': 1, 'f': 2, 'r': 3, 'x': 4, 'j': 5, 'z': 0}
 
@@ -103,6 +105,21 @@ def find_tone_target(buffer):
 
     if not vowel_positions:
         return -1
+
+    # Exclude 'u' in "qu" and 'i' in "gi" — these are part of the consonant
+    if len(vowel_positions) >= 2:
+        first_v = vowel_positions[0]
+        if first_v >= 1:
+            prev = buffer[first_v - 1].lower()
+            first_base = get_base_and_tone(buffer[first_v])
+            if first_base:
+                fv_lower = first_base[0]
+                if (prev == 'q' and fv_lower == 'u') or \
+                   (prev == 'g' and fv_lower == 'i'):
+                    vowel_positions = vowel_positions[1:]
+
+    if not vowel_positions:
+        return -1
     if len(vowel_positions) == 1:
         return vowel_positions[0]
 
@@ -122,12 +139,10 @@ def find_tone_target(buffer):
             break
 
     if has_trailing_consonant:
-        # Tone on the penultimate vowel in the cluster
-        if len(vowel_positions) >= 2:
-            return vowel_positions[-2]
-        return vowel_positions[0]
+        # Tone on the last vowel before the final consonant
+        return vowel_positions[-1]
     else:
-        # No trailing consonant
+        # No trailing consonant: tone on the penultimate vowel
         if len(vowel_positions) == 2:
             return vowel_positions[0]
         elif len(vowel_positions) >= 3:
@@ -153,6 +168,14 @@ def _find_vowel_for_transform(buffer, trigger_lower):
     return None
 
 
+def _validate_buffer(new_buffer):
+    """Check if new_buffer is a valid Vietnamese syllable structure.
+    Import here to avoid circular import at module level.
+    """
+    import vn_validator
+    return vn_validator.is_valid_vietnamese(new_buffer)
+
+
 def process_key(buffer, key):
     """Process a new key press against the current word buffer.
 
@@ -161,9 +184,15 @@ def process_key(buffer, key):
         key: the new character typed (single char string)
 
     Returns:
-        (new_buffer, backspace_count): updated buffer and number of chars to
-        delete before retyping. If backspace_count is 0, the key passes through
-        normally (append only).
+        (new_buffer, backspace_count, transform_info): updated buffer, number
+        of chars to delete before retyping, and transform info dict (or None).
+        If backspace_count is 0, the key passes through normally (append only).
+
+        transform_info (when not None) contains:
+            'key': the literal key that triggered the transform
+            'old_buffer': the buffer before this transform was applied
+        This allows retroactive undo if subsequent characters invalidate
+        the syllable.
     """
     key_lower = key.lower()
     key_upper = key.upper() == key and key.lower() != key
@@ -181,35 +210,37 @@ def process_key(buffer, key):
                     if current_tone != 0:
                         new_char = apply_tone(base_lower, 0, was_upper)
                         new_buffer = buffer[:target] + [new_char] + buffer[target + 1:]
-                        return (new_buffer, len(buffer))
+                        if _validate_buffer(new_buffer):
+                            return (new_buffer, len(buffer), {'key': key, 'old_buffer': buffer[:]})
                     # No tone to remove, treat as regular char
                 else:
                     if current_tone == tone_idx:
                         # Same tone again: remove it and output the key as literal
                         new_char = apply_tone(base_lower, 0, was_upper)
                         new_buffer = buffer[:target] + [new_char] + buffer[target + 1:] + [key]
-                        return (new_buffer, len(buffer))
+                        return (new_buffer, len(buffer), None)
                     else:
                         new_char = apply_tone(base_lower, tone_idx, was_upper)
                         new_buffer = buffer[:target] + [new_char] + buffer[target + 1:]
-                        return (new_buffer, len(buffer))
+                        if _validate_buffer(new_buffer):
+                            return (new_buffer, len(buffer), {'key': key, 'old_buffer': buffer[:]})
 
     # --- Handle 'dd' -> đ ---
     if key_lower == 'd' and buffer:
         last = buffer[-1]
         if last == 'd':
             new_buffer = buffer[:-1] + [CONSONANT_D_LOWER]
-            return (new_buffer, 1)
+            return (new_buffer, 1, {'key': key, 'old_buffer': buffer[:]})
         elif last == 'D':
             new_buffer = buffer[:-1] + [CONSONANT_D_UPPER]
-            return (new_buffer, 1)
+            return (new_buffer, 1, {'key': key, 'old_buffer': buffer[:]})
         # Undo: đ + d -> dd
         elif last == CONSONANT_D_LOWER:
             new_buffer = buffer[:-1] + ['d', key]
-            return (new_buffer, 1)
+            return (new_buffer, 1, None)
         elif last == CONSONANT_D_UPPER:
             new_buffer = buffer[:-1] + ['D', key.upper() if key_upper else key]
-            return (new_buffer, 1)
+            return (new_buffer, 1, None)
 
     # --- Handle vowel transforms (aa->â, aw->ă, ee->ê, oo->ô, ow->ơ, uw->ư) ---
     if key_lower in ('a', 'e', 'o', 'w'):
@@ -222,14 +253,15 @@ def process_key(buffer, key):
                 original_base = VOWEL_UNDO[(base_lower, key_lower)]
                 new_char = apply_tone(original_base, tone_idx, was_upper)
                 new_buffer = buffer[:idx] + [new_char] + buffer[idx + 1:] + [key]
-                return (new_buffer, len(buffer) - idx)
+                return (new_buffer, len(buffer) - idx, None)
 
             # Apply transform
             if (base_lower, key_lower) in VOWEL_TRANSFORMS:
                 new_base = VOWEL_TRANSFORMS[(base_lower, key_lower)]
                 new_char = apply_tone(new_base, tone_idx, was_upper)
                 new_buffer = buffer[:idx] + [new_char] + buffer[idx + 1:]
-                return (new_buffer, len(buffer) - idx)
+                if _validate_buffer(new_buffer):
+                    return (new_buffer, len(buffer) - idx, {'key': key, 'old_buffer': buffer[:]})
 
     # --- Handle 'w' transforming u->ư or o->ơ anywhere in the word ---
     if key_lower == 'w' and buffer:
@@ -242,8 +274,9 @@ def process_key(buffer, key):
                     new_base = VOWEL_TRANSFORMS[(base_lower, 'w')]
                     new_char = apply_tone(new_base, tone_idx, was_upper)
                     new_buffer = buffer[:i] + [new_char] + buffer[i + 1:]
-                    return (new_buffer, len(buffer) - i)
+                    if _validate_buffer(new_buffer):
+                        return (new_buffer, len(buffer) - i, {'key': key, 'old_buffer': buffer[:]})
 
     # --- No transformation: just append ---
     new_buffer = buffer + [key]
-    return (new_buffer, 0)
+    return (new_buffer, 0, None)

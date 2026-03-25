@@ -11,6 +11,7 @@ from pynput.keyboard import Key, KeyCode, Controller
 
 import config
 import telex_engine
+import vn_validator
 
 # Map config modifier names to pynput Key sets
 _MODIFIER_MAP = {
@@ -30,6 +31,8 @@ class KeyboardHandler:
         self._on_mode_change = on_mode_change
         self._listener = None
         self._lock = threading.Lock()
+        # Track last transform for retroactive undo
+        self._last_transform = None  # {'key': str, 'old_buffer': list}
 
     def start(self):
         """Start the keyboard listener (blocking)."""
@@ -46,6 +49,10 @@ class KeyboardHandler:
             self._listener.stop()
 
     def _on_press(self, key):
+        total_bs = 0
+        new_text = ''
+        need_replace = False
+
         with self._lock:
             # Skip events that we injected ourselves
             if self._skip_events > 0:
@@ -68,16 +75,19 @@ class KeyboardHandler:
                     self.buffer.pop()
                 elif key in (Key.enter, Key.tab, Key.space):
                     self.buffer.clear()
+                    self._last_transform = None
                 else:
                     if key not in (Key.shift, Key.shift_r, Key.ctrl_l, Key.ctrl_r,
                                    Key.alt_l, Key.alt_r, Key.alt_gr, Key.caps_lock,
                                    Key.cmd, Key.cmd_r):
                         self.buffer.clear()
+                        self._last_transform = None
                 return
 
             # Word-break character
             if char in config.WORD_BREAK_CHARS:
                 self.buffer.clear()
+                self._last_transform = None
                 return
 
             # Not in Vietnamese mode: just track the buffer
@@ -87,26 +97,46 @@ class KeyboardHandler:
 
             # Process through Telex engine
             old_buffer = self.buffer[:]
-            new_buffer, backspace_count = telex_engine.process_key(self.buffer, char)
+            new_buffer, backspace_count, transform_info = telex_engine.process_key(self.buffer, char)
 
             if backspace_count == 0:
+                # No transform applied — check if appending this char
+                # invalidates a previous transform (retroactive undo)
                 self.buffer = new_buffer
-                return
+                if self._last_transform and not vn_validator.is_valid_vietnamese(self.buffer):
+                    # Revert: restore old buffer + literal key from that transform
+                    reverted = self._last_transform['old_buffer'] + [self._last_transform['key']]
+                    # Re-append any chars added after the transform (including current char)
+                    transform_buf_len = len(self._last_transform['old_buffer'])
+                    chars_after = self.buffer[transform_buf_len:]
+                    reverted.extend(chars_after)
+                    self._last_transform = None
+                    self.buffer = reverted
 
-            # Transformation needed.
-            self.buffer = new_buffer
-            total_bs = backspace_count + 1
+                    # Erase what's on screen (old visible + the char that just passed through)
+                    total_bs = len(old_buffer) + 1
+                    new_text = ''.join(reverted)
+                    self._skip_events = total_bs + len(new_text)
+                    need_replace = True
+                # If no retroactive undo needed, just fall through (need_replace stays False)
+            else:
+                # Transformation applied
+                self.buffer = new_buffer
+                self._last_transform = transform_info
+                total_bs = backspace_count + 1
 
-            diff_start = len(old_buffer) - backspace_count
-            if diff_start < 0:
-                diff_start = 0
-            new_text = ''.join(new_buffer[diff_start:])
+                diff_start = len(old_buffer) - backspace_count
+                if diff_start < 0:
+                    diff_start = 0
+                new_text = ''.join(new_buffer[diff_start:])
 
-            # Skip counter for our injected events
-            self._skip_events = total_bs + len(new_text)
+                # Skip counter for our injected events
+                self._skip_events = total_bs + len(new_text)
+                need_replace = True
 
         # Release lock before sending keys
-        self._replace_keystroke(total_bs, new_text)
+        if need_replace:
+            self._replace_keystroke(total_bs, new_text)
 
     def _on_release(self, key):
         self._pressed_keys.discard(key)
