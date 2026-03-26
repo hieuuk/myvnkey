@@ -241,6 +241,15 @@ def process_key(buffer, key):
         elif last == CONSONANT_D_UPPER:
             new_buffer = buffer[:-1] + ['D', key.upper() if key_upper else key]
             return (new_buffer, 1, None)
+        # Flexible dd: initial 'd' + vowels + 'd' -> 'đ' + vowels
+        # e.g., "dod" -> "đo", "dươngd" -> "đương"
+        elif buffer[0].lower() == 'd' and buffer[0] not in (CONSONANT_D_LOWER, CONSONANT_D_UPPER):
+            # Check there's at least one vowel between the initial d and this d
+            has_vowel = any(is_vowel(ch) for ch in buffer[1:])
+            if has_vowel:
+                new_d = CONSONANT_D_UPPER if buffer[0].isupper() else CONSONANT_D_LOWER
+                new_buffer = [new_d] + buffer[1:]
+                return (new_buffer, len(buffer), {'key': key, 'old_buffer': buffer[:]})
 
     # --- Handle vowel transforms (aa->â, aw->ă, ee->ê, oo->ô, ow->ơ, uw->ư) ---
     if key_lower in ('a', 'e', 'o', 'w'):
