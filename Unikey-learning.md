@@ -7,13 +7,13 @@ Findings from comparing x-unikey-1.0.4 (`src/ukengine/`) with MyVNKey's `telex_e
 1. [Auto-restore non-Vietnamese keystrokes](#1-auto-restore-non-vietnamese-keystrokes) — HIGH — DONE
 2. [Keystroke buffer for undo/restore](#2-keystroke-buffer-for-undorestore) — HIGH — DONE
 3. [Exhaustive vowel + final consonant pair table](#3-exhaustive-vowel--final-consonant-pair-table) — HIGH — DONE
-4. [Full CVC triplet validation](#4-full-cvc-triplet-validation) — MEDIUM
-5. [Modern vs traditional tone placement](#5-modern-vs-traditional-tone-placement) — MEDIUM
-6. [Data-driven tone placement](#6-data-driven-tone-placement) — MEDIUM
+4. [Full CVC triplet validation](#4-full-cvc-triplet-validation) — MEDIUM — DONE
+5. [Modern vs traditional tone placement](#5-modern-vs-traditional-tone-placement) — MEDIUM — DONE
+6. [Data-driven tone placement](#6-data-driven-tone-placement) — MEDIUM — DONE
 7. [Free marking vs strict mode](#7-free-marking-vs-strict-mode) — LOW
-8. [Backspace tone repositioning](#8-backspace-tone-repositioning) — MEDIUM
+8. [Backspace tone repositioning](#8-backspace-tone-repositioning) — MEDIUM — DONE
 9. [Macro support](#9-macro-support) — LOW
-10. [`gi` standalone tone handling](#10-gi-standalone-tone-handling) — MEDIUM
+10. [`gi` standalone tone handling](#10-gi-standalone-tone-handling) — MEDIUM — DONE
 
 ---
 
@@ -47,31 +47,31 @@ Findings from comparing x-unikey-1.0.4 (`src/ukengine/`) with MyVNKey's `telex_e
 
 ---
 
-## 4. Full CVC triplet validation
+## 4. Full CVC triplet validation — DONE
 
 **Unikey**: `isValidCVC(c1, v, c2)` validates the entire initial+vowel+final as a unit, including exceptions:
 - `qu` + `y` + `n/nh` → valid (quynh, quyn) despite `y+n` being invalid alone
 - `gi` + `e/ê` + `n/ng` → valid (giêng) despite `e+ng` being invalid alone
 
-**MyVNKey**: Validates C+V and V+C mostly independently, missing these cross-cutting exceptions.
+**MyVNKey**: ~~Validates C+V and V+C mostly independently, missing these cross-cutting exceptions.~~ Implemented `_CVC_EXCEPTIONS` set in `vn_validator.py` with `(initial, nucleus, final)` triplets. Both `is_valid_vietnamese()` and `is_complete_vietnamese()` check exceptions before rejecting VC pairs.
 
 **Source**: `ukengine.cpp:390-419` (`isValidCVC`).
 
 ---
 
-## 5. Modern vs traditional tone placement
+## 5. Modern vs traditional tone placement — DONE
 
 **Unikey**: `getTonePosition()` checks `m_pCtrl->options.modernStyle`. For diphthongs `oa`, `oe`, `uy`:
 - Traditional: tone on first vowel → hòa, hòe, thùy
 - Modern: tone on second vowel → hoà, hoè, thuỳ
 
-**MyVNKey**: Always uses one style, no user option.
+**MyVNKey**: ~~Always uses one style, no user option.~~ Added `config.tone_style` setting (`'old'`/`'new'`). `find_tone_target()` in `telex_engine.py` checks this for `oa`, `oe`, `uy` diphthongs. Persisted in `~/.myvnkey.json`.
 
 **Source**: `ukengine.cpp:929-951` (`getTonePosition`), `keycons.h:42` (`modernStyle` option).
 
 ---
 
-## 6. Data-driven tone placement
+## 6. Data-driven tone placement — DONE
 
 **Unikey**: `getTonePosition()` uses structured `VowelSeqInfo` metadata:
 1. If roofPos != -1 (â, ê, ô exists) → tone goes there
@@ -79,7 +79,7 @@ Findings from comparing x-unikey-1.0.4 (`src/ukengine/`) with MyVNKey's `telex_e
 3. If 3-vowel sequence → always position 1 (middle vowel)
 4. Else: terminated ? position 0 : position 1
 
-**MyVNKey**: `find_tone_target()` uses similar logic but ad-hoc. The modified-vowel priority and ươ/uô special cases are hardcoded.
+**MyVNKey**: ~~`find_tone_target()` uses similar logic but ad-hoc.~~ Improved in earlier commits: single modified vowel gets priority, ươ/uô diphthongs always place tone on second vowel, modern style support for oa/oe/uy added. Logic now closely follows Unikey's algorithm.
 
 **Source**: `ukengine.cpp:929-951`.
 
@@ -93,11 +93,11 @@ Findings from comparing x-unikey-1.0.4 (`src/ukengine/`) with MyVNKey's `telex_e
 
 ---
 
-## 8. Backspace tone repositioning
+## 8. Backspace tone repositioning — DONE
 
 **Unikey**: `processBackspace()` detects if deleting a character changes the required tone position and moves the tone mark. Example: deleting final `n` from `toán` should shift tone from `a` back to `o`.
 
-**MyVNKey**: Backspace just pops the last character. No tone repositioning.
+**MyVNKey**: ~~Backspace just pops the last character. No tone repositioning.~~ Implemented `_reposition_tone_after_delete()` in `keyboard_hook.py`. After deleting a character, it checks if the tone position needs to change via `find_tone_target()` and repositions by erasing and retyping the buffer.
 
 **Source**: `ukengine.cpp:1919-1976`.
 
@@ -113,10 +113,10 @@ Findings from comparing x-unikey-1.0.4 (`src/ukengine/`) with MyVNKey's `telex_e
 
 ---
 
-## 10. `gi` standalone tone handling
+## 10. `gi` standalone tone handling — DONE
 
 **Unikey**: When the word form is `vnw_c` and the consonant is `cs_gi` or `cs_gin`, `processTone()` applies the tone directly to the `i` at the consonant position. This allows typing `gì`, `gí` correctly.
 
-**MyVNKey**: `gi` is parsed as initial consonant in `vn_validator.py`, but tone application to the `i` within `gi` is not explicitly handled.
+**MyVNKey**: ~~`gi` is parsed as initial consonant in `vn_validator.py`, but tone application to the `i` within `gi` is not explicitly handled.~~ Added special case in `telex_engine.process_key()`: when buffer is exactly `['g', 'i']` and a tone key is pressed, tone is applied directly to the `i`. Handles all tones including undo.
 
 **Source**: `ukengine.cpp:954-974`.

@@ -219,6 +219,24 @@ class TestFinalVowelCompat:
 # Prefix typing (partial words should be valid while typing)
 # ---------------------------------------------------------------------------
 
+class TestCVCExceptions:
+    """#4: CVC triplet exceptions — qu+y+n/nh, gi+e/ê+n/ng."""
+
+    @pytest.mark.parametrize("word", [
+        "quỳnh", "quynh", "quyn",
+        "giêng", "gieng", "giên",
+    ])
+    def test_cvc_exceptions_valid(self, word):
+        assert is_valid_vietnamese(list(word)) is True, f"'{word}' should be valid (CVC exception)"
+
+    @pytest.mark.parametrize("word", [
+        "quỳnh", "quynh",
+    ])
+    def test_cvc_exceptions_complete(self, word):
+        from vn_validator import is_complete_vietnamese
+        assert is_complete_vietnamese(list(word)) is True, f"'{word}' should be complete valid"
+
+
 class TestPrefixTyping:
 
     @pytest.mark.parametrize("partial", [

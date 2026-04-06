@@ -78,9 +78,15 @@ class KeyboardHandler:
                 # Special key (Enter, Backspace, arrows, etc.)
                 if key == Key.backspace:
                     if self.buffer:
+                        old_buffer = self.buffer[:]
                         self.buffer.pop()
                         if self._raw_keystrokes:
                             self._raw_keystrokes.pop()
+                        # Reposition tone if needed after deletion
+                        reposition = self._reposition_tone_after_delete(old_buffer, self.buffer)
+                        if reposition:
+                            total_bs, new_text = reposition
+                            need_replace = True
                     elif self._buffer_history:
                         # Backspace on empty buffer: user deleted back into
                         # the previous word — restore its context.
@@ -196,6 +202,55 @@ class KeyboardHandler:
         # Not valid Vietnamese — restore original keystrokes
         backspace_count = len(current_text)
         return (backspace_count, raw_text)
+
+    def _reposition_tone_after_delete(self, old_buffer, new_buffer):
+        """Check if tone needs repositioning after a character was deleted.
+
+        When deleting a final consonant or vowel, the tone position may shift.
+        E.g., "toán" -> delete 'n' -> tone should move from 'a' to 'o' -> "tóa"
+
+        Returns (backspace_count, replacement_text) or None.
+        """
+        if not config.vietnamese_mode or not new_buffer:
+            return None
+
+        # Find the current tone in the new buffer
+        tone_idx = 0
+        tone_pos = -1
+        for i, ch in enumerate(new_buffer):
+            info = telex_engine.get_base_and_tone(ch)
+            if info and info[1] != 0:
+                tone_idx = info[1]
+                tone_pos = i
+                break
+
+        if tone_idx == 0:
+            return None  # No tone to reposition
+
+        # Find where tone SHOULD be in the new buffer
+        correct_pos = telex_engine.find_tone_target(new_buffer)
+        if correct_pos < 0 or correct_pos == tone_pos:
+            return None  # Already correct
+
+        # Move the tone: remove from old position, add at new position
+        result = list(new_buffer)
+
+        # Remove tone from current position
+        old_info = telex_engine.get_base_and_tone(result[tone_pos])
+        if old_info:
+            result[tone_pos] = telex_engine.apply_tone(old_info[0], 0, old_info[2])
+
+        # Add tone at correct position
+        new_info = telex_engine.get_base_and_tone(result[correct_pos])
+        if new_info:
+            result[correct_pos] = telex_engine.apply_tone(new_info[0], tone_idx, new_info[2])
+
+        self.buffer = result
+
+        # The backspace for the deleted char already happened (the OS processes it).
+        # We need to erase the remaining visible text and retype with repositioned tone.
+        # After the OS backspace, len(new_buffer) chars are visible.
+        return (len(new_buffer), ''.join(result))
 
     def _check_toggle(self):
         """Check if the configured switch key is pressed."""

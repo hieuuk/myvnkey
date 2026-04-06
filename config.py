@@ -21,6 +21,9 @@ app_rules = []
 beep_on_switch = False                          # Play a beep when language switches
 switch_key = {'modifier': 'alt', 'key': 'z'}   # Hotkey to toggle Vietnamese mode
 autorun = False                                 # Start with Windows
+tone_style = 'old'                              # 'old' (traditional) or 'new' (modern)
+                                                # old: hòa, hòe, thùy
+                                                # new: hoà, hoè, thuỳ
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -35,7 +38,7 @@ KEY_OPTIONS = list('ABCDEFGHIJKLMNOPQRSTUVWXYZ')
 
 def load_config():
     """Load settings from the JSON config file."""
-    global app_rules, default_mode, beep_on_switch, switch_key, autorun
+    global app_rules, default_mode, beep_on_switch, switch_key, autorun, tone_style
     if not os.path.exists(CONFIG_FILE):
         return
     try:
@@ -54,6 +57,7 @@ def load_config():
         if 'switch_key' in data:
             switch_key = data['switch_key']
         autorun = data.get('autorun', False)
+        tone_style = data.get('tone_style', 'old')
     except (json.JSONDecodeError, OSError):
         pass
 
@@ -66,6 +70,7 @@ def save_config():
         'beep_on_switch': beep_on_switch,
         'switch_key': switch_key,
         'autorun': autorun,
+        'tone_style': tone_style,
     }
     try:
         with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
@@ -82,6 +87,7 @@ def export_config(path):
         'beep_on_switch': beep_on_switch,
         'switch_key': switch_key,
         'autorun': autorun,
+        'tone_style': tone_style,
     }
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=2, ensure_ascii=False)

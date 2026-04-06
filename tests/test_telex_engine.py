@@ -264,6 +264,83 @@ class TestFullWords:
 # Edge cases
 # ---------------------------------------------------------------------------
 
+class TestGiStandaloneTone:
+    """#10: gi standalone tone handling — gì, gí, etc."""
+
+    def test_gi_huyen(self):
+        assert simulate("gif") == "gì"
+
+    def test_gi_sac(self):
+        assert simulate("gis") == "gí"
+
+    def test_gi_hoi(self):
+        assert simulate("gir") == "gỉ"
+
+    def test_gi_nga(self):
+        assert simulate("gix") == "gĩ"
+
+    def test_gi_nang(self):
+        assert simulate("gij") == "gị"
+
+    def test_gi_remove_tone(self):
+        assert simulate("gisz") == "gi"
+
+    def test_gi_same_tone_twice(self):
+        # gí + s -> gis (undo tone, append literal)
+        assert simulate("giss") == "gis"
+
+    def test_gi_uppercase(self):
+        assert simulate("Gif") == "Gì"
+
+
+class TestModernToneStyle:
+    """#5: Modern vs traditional tone placement for oa, oe, uy."""
+
+    def test_traditional_hoa(self):
+        import config
+        config.tone_style = 'old'
+        assert simulate("hoaf") == "hòa"
+
+    def test_modern_hoa(self):
+        import config
+        config.tone_style = 'new'
+        result = simulate("hoaf")
+        config.tone_style = 'old'  # restore
+        assert result == "hoà"
+
+    def test_traditional_hoe(self):
+        import config
+        config.tone_style = 'old'
+        assert simulate("hoer") == "hỏe"
+
+    def test_modern_hoe(self):
+        import config
+        config.tone_style = 'new'
+        result = simulate("hoer")
+        config.tone_style = 'old'
+        assert result == "hoẻ"
+
+    def test_traditional_thuy(self):
+        import config
+        config.tone_style = 'old'
+        assert simulate("thuyf") == "thùy"
+
+    def test_modern_thuy(self):
+        import config
+        config.tone_style = 'new'
+        result = simulate("thuyf")
+        config.tone_style = 'old'
+        assert result == "thuỳ"
+
+    def test_non_oa_oe_uy_unaffected(self):
+        """Other diphthongs should not be affected by modern style."""
+        import config
+        config.tone_style = 'new'
+        result = simulate("muaf")
+        config.tone_style = 'old'
+        assert result == "mùa"  # ua is not oa/oe/uy, so still traditional
+
+
 class TestEdgeCases:
 
     def test_empty_buffer_tone_key(self):

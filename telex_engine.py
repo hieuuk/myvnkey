@@ -163,6 +163,16 @@ def find_tone_target(buffer):
     else:
         # No trailing consonant: tone on the penultimate vowel
         if len(vowel_positions) == 2:
+            # Modern tone style: for oa, oe, uy diphthongs, tone on second vowel
+            import config
+            if config.tone_style == 'new':
+                bases = []
+                for idx in vowel_positions:
+                    info = get_base_and_tone(buffer[idx])
+                    bases.append(info[0] if info else '')
+                nucleus = ''.join(bases)
+                if nucleus in ('oa', 'oe', 'uy'):
+                    return vowel_positions[1]
             return vowel_positions[0]
         elif len(vowel_positions) >= 3:
             return vowel_positions[1]
@@ -215,6 +225,28 @@ def process_key(buffer, key):
     """
     key_lower = key.lower()
     key_upper = key.upper() == key and key.lower() != key
+
+    # --- Handle tone on standalone "gi" (e.g., gì, gí) ---
+    # When buffer is just "gi" (consonant-only), tone applies to the 'i'
+    if key_lower in TONE_KEYS and len(buffer) == 2:
+        if buffer[0].lower() == 'g' and buffer[1].lower() == 'i' and is_vowel(buffer[1]):
+            tone_idx = TONE_KEYS[key_lower]
+            info = get_base_and_tone(buffer[1])
+            if info:
+                base_lower, current_tone, was_upper = info
+                if tone_idx == 0:
+                    if current_tone != 0:
+                        new_char = apply_tone(base_lower, 0, was_upper)
+                        new_buffer = [buffer[0], new_char]
+                        return (new_buffer, 2, {'key': key, 'old_buffer': buffer[:]})
+                elif current_tone == tone_idx:
+                    new_char = apply_tone(base_lower, 0, was_upper)
+                    new_buffer = [buffer[0], new_char, key]
+                    return (new_buffer, 2, None)
+                else:
+                    new_char = apply_tone(base_lower, tone_idx, was_upper)
+                    new_buffer = [buffer[0], new_char]
+                    return (new_buffer, 2, {'key': key, 'old_buffer': buffer[:]})
 
     # --- Handle tone keys ---
     if key_lower in TONE_KEYS and buffer:

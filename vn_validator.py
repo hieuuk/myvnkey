@@ -55,6 +55,17 @@ _INITIAL_LEADING_VOWEL = {
     # the initial when followed by a vowel, so the nucleus won't start with 'u'.
 }
 
+# CVC exceptions: (initial, nucleus, final) triplets that are valid even though
+# the (nucleus, final) pair alone is not in _VALID_VC_PAIRS.
+# Ported from Unikey's isValidCVC() exceptions in ukengine.cpp:390-419.
+_CVC_EXCEPTIONS = {
+    # qu + y + n/nh (quynh, quyn)
+    ('qu', 'y', 'n'), ('qu', 'y', 'nh'),
+    # gi + e/ê + n/ng (gieng, giêng)
+    ('gi', 'e', 'n'), ('gi', 'e', 'ng'),
+    ('gi', 'ê', 'n'), ('gi', 'ê', 'ng'),
+}
+
 # Exhaustive set of valid (vowel_nucleus_base, final_consonant) pairs.
 # Ported from Unikey's VCPairList in ukengine.cpp (~130 valid pairs).
 # If a nucleus+final combination is not in this set, it's not a valid Vietnamese syllable.
@@ -307,20 +318,18 @@ def is_complete_vietnamese(buffer):
     if final_lower:
         if final_lower not in VALID_FINALS:
             return False
-        if nucleus_base in _NO_FINAL_NUCLEI:
-            return False
-        if (nucleus_base, final_lower) not in _VALID_VC_PAIRS:
-            return False
+        # Check CVC exceptions first (e.g., qu+y+n, gi+ê+ng)
+        is_cvc_exception = (initial_lower, nucleus_base, final_lower) in _CVC_EXCEPTIONS
+        if not is_cvc_exception:
+            if nucleus_base in _NO_FINAL_NUCLEI:
+                return False
+            if (nucleus_base, final_lower) not in _VALID_VC_PAIRS:
+                return False
         # Tone + checked final
         if final_lower in _CHECKED_FINALS:
             tone = _get_tone_from_vowel(vowel)
             if tone not in (0, 1, 5):
                 return False
-    else:
-        # No final: nucleus must be a "complete" vowel sequence
-        # (some like 'ie' are incomplete without a final — they need 'iê' + consonant)
-        # For now, accept all nuclei in the valid set as potentially complete words
-        pass
 
     return True
 
@@ -395,10 +404,22 @@ def is_valid_vietnamese(buffer):
         if not prefix_final:
             return False
 
+    # --- Check CVC exceptions first (e.g., qu+y+n, gi+ê+ng) ---
+    is_cvc_exception = False
+    if valid_final and nucleus_base:
+        is_cvc_exception = (initial_lower, nucleus_base, final_lower) in _CVC_EXCEPTIONS
+        # Also check if nucleus could be transformed into an exception
+        if not is_cvc_exception:
+            for valid_nuc in _VALID_VOWEL_NUCLEI:
+                if _nucleus_could_match(nucleus_base, valid_nuc):
+                    if (initial_lower, valid_nuc, final_lower) in _CVC_EXCEPTIONS:
+                        is_cvc_exception = True
+                        break
+
     # --- Validate nucleus that cannot take any final consonant ---
     # Only reject if the nucleus is exact match (already fully transformed)
     # Don't reject 'uo' which could become 'uô' (which allows finals)
-    if valid_final and nucleus_base in _NO_FINAL_NUCLEI:
+    if valid_final and nucleus_base in _NO_FINAL_NUCLEI and not is_cvc_exception:
         if nucleus_base in _VALID_VOWEL_NUCLEI:
             # Exact known nucleus that can't take finals — but check if it
             # could also match a different nucleus that CAN take finals
@@ -412,7 +433,7 @@ def is_valid_vietnamese(buffer):
                 return False
 
     # --- Validate final + vowel compatibility via exhaustive pair table ---
-    if valid_final and nucleus_base:
+    if valid_final and nucleus_base and not is_cvc_exception:
         if (nucleus_base, final_lower) not in _VALID_VC_PAIRS:
             # The nucleus might still be transformable (e.g., 'uo' -> 'uô' or 'ươ')
             # Check if any possible transformed nucleus would make a valid pair
