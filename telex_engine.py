@@ -124,10 +124,29 @@ def find_tone_target(buffer):
         return vowel_positions[0]
 
     # Check for modified vowels (â, ă, ê, ô, ơ, ư) - these get priority
+    # but only when there's exactly one modified vowel (e.g., 'oă' in 'hoắc').
+    # When multiple modified vowels exist (e.g., 'ươ'), fall through to
+    # standard position rules.
+    _MODIFIED = ('â', 'ă', 'ê', 'ô', 'ơ', 'ư')
+    modified_positions = []
     for idx in vowel_positions:
         info = get_base_and_tone(buffer[idx])
-        if info and info[0] in ('â', 'ă', 'ê', 'ô', 'ơ', 'ư'):
-            return idx
+        if info and info[0] in _MODIFIED:
+            modified_positions.append(idx)
+    if len(modified_positions) == 1:
+        return modified_positions[0]
+
+    # Special case for ươ/uô diphthongs: tone always on the second vowel
+    # regardless of whether a final consonant has been typed yet.
+    # e.g., "được" -> tone on ơ, "người" -> tone on ơ, "uống" -> tone on ô
+    if len(vowel_positions) >= 2:
+        bases = []
+        for idx in vowel_positions:
+            info = get_base_and_tone(buffer[idx])
+            bases.append(info[0] if info else '')
+        nucleus = ''.join(bases)
+        if nucleus in ('ươ', 'uô'):
+            return vowel_positions[1]
 
     # Check if there's a consonant after the last vowel
     last_vowel_idx = vowel_positions[-1]

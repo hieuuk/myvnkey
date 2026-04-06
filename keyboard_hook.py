@@ -34,7 +34,12 @@ class KeyboardHandler:
         # Track last transform for retroactive undo
         self._last_transform = None  # {'key': str, 'old_buffer': list}
         # Buffer history stack for restoring context after word breaks
-        self._buffer_history = []  # list of (buffer_snapshot, last_transform)
+        self._buffer_history = []  # list of (buffer_snapshot, last_transform, raw_keystrokes)
+        # Raw keystroke buffer: records original typed characters before transforms
+        # Used to restore original keystrokes when word turns out to be non-Vietnamese
+        self._raw_keystrokes = []
+        # Whether any Telex transform was applied in the current word
+        self._has_transforms = False
 
     def start(self):
         """Start the keyboard listener (blocking)."""
@@ -74,70 +79,71 @@ class KeyboardHandler:
                 if key == Key.backspace:
                     if self.buffer:
                         self.buffer.pop()
+                        if self._raw_keystrokes:
+                            self._raw_keystrokes.pop()
                     elif self._buffer_history:
                         # Backspace on empty buffer: user deleted back into
                         # the previous word — restore its context.
-                        self.buffer, self._last_transform = self._buffer_history.pop()
+                        self.buffer, self._last_transform, self._raw_keystrokes, self._has_transforms = self._buffer_history.pop()
                 elif key in (Key.enter, Key.tab, Key.space):
+                    restore_result = self._check_and_restore()
+                    if restore_result:
+                        total_bs, new_text = restore_result
+                        need_replace = True
                     self._push_history()
-                    self.buffer.clear()
-                    self._last_transform = None
+                    self._reset_word_state()
                 else:
                     if key not in (Key.shift, Key.shift_r, Key.ctrl_l, Key.ctrl_r,
                                    Key.alt_l, Key.alt_r, Key.alt_gr, Key.caps_lock,
                                    Key.cmd, Key.cmd_r):
                         # Hard break (arrows, escape, etc.): clear everything
-                        self.buffer.clear()
+                        self._reset_word_state()
                         self._buffer_history.clear()
-                        self._last_transform = None
-                return
-
-            # Word-break character
-            if char in config.WORD_BREAK_CHARS:
-                self._push_history()
-                self.buffer.clear()
-                self._last_transform = None
-                return
-
-            # Not in Vietnamese mode: just track the buffer
-            if not config.vietnamese_mode:
-                self.buffer.append(char)
-                return
-
-            # Process through Telex engine
-            old_buffer = self.buffer[:]
-            new_buffer, backspace_count, transform_info = telex_engine.process_key(self.buffer, char)
-
-            if backspace_count == 0:
-                # No transform applied — check if appending this char
-                # invalidates a previous transform (retroactive undo)
-                self.buffer = new_buffer
-                if self._last_transform and not vn_validator.is_valid_vietnamese(self.buffer):
-                    # Revert: restore old buffer + literal key from that transform
-                    reverted = self._last_transform['old_buffer'] + [self._last_transform['key']]
-                    # Re-append any chars added after the transform (including current char)
-                    transform_buf_len = len(self._last_transform['old_buffer'])
-                    chars_after = self.buffer[transform_buf_len:]
-                    reverted.extend(chars_after)
-                    self._last_transform = None
-                    self.buffer = reverted
-
-                    # Erase what's on screen (old visible + the char that just passed through)
-                    total_bs = len(old_buffer) + 1
-                    new_text = ''.join(reverted)
+            elif char in config.WORD_BREAK_CHARS:
+                # Word-break character: check restore before clearing
+                restore_result = self._check_and_restore()
+                if restore_result:
+                    total_bs, new_text = restore_result
                     need_replace = True
-                # If no retroactive undo needed, just fall through (need_replace stays False)
+                self._push_history()
+                self._reset_word_state()
+            elif not config.vietnamese_mode:
+                # Not in Vietnamese mode: just track the buffer
+                self.buffer.append(char)
+                self._raw_keystrokes.append(char)
             else:
-                # Transformation applied
-                self.buffer = new_buffer
-                self._last_transform = transform_info
-                total_bs = backspace_count + 1
+                # Vietnamese mode: process through Telex engine
+                self._raw_keystrokes.append(char)
+                old_buffer = self.buffer[:]
+                new_buffer, backspace_count, transform_info = telex_engine.process_key(self.buffer, char)
 
-                diff_start = len(old_buffer) - backspace_count
-                if diff_start < 0:
-                    diff_start = 0
-                new_text = ''.join(new_buffer[diff_start:])
-                need_replace = True
+                if backspace_count == 0:
+                    # No transform — check retroactive undo
+                    self.buffer = new_buffer
+                    if self._last_transform and not vn_validator.is_valid_vietnamese(self.buffer):
+                        reverted = self._last_transform['old_buffer'] + [self._last_transform['key']]
+                        transform_buf_len = len(self._last_transform['old_buffer'])
+                        chars_after = self.buffer[transform_buf_len:]
+                        reverted.extend(chars_after)
+                        self._last_transform = None
+                        self.buffer = reverted
+
+                        total_bs = len(old_buffer) + 1
+                        new_text = ''.join(reverted)
+                        need_replace = True
+                else:
+                    # Transformation applied
+                    self.buffer = new_buffer
+                    self._last_transform = transform_info
+                    if transform_info is not None:
+                        self._has_transforms = True
+                    total_bs = backspace_count + 1
+
+                    diff_start = len(old_buffer) - backspace_count
+                    if diff_start < 0:
+                        diff_start = 0
+                    new_text = ''.join(new_buffer[diff_start:])
+                    need_replace = True
 
         # Release lock before sending keys
         if need_replace:
@@ -151,10 +157,45 @@ class KeyboardHandler:
     def _push_history(self):
         """Save current buffer to history stack (if non-empty)."""
         if self.buffer:
-            self._buffer_history.append((self.buffer[:], self._last_transform))
+            self._buffer_history.append((
+                self.buffer[:], self._last_transform,
+                self._raw_keystrokes[:], self._has_transforms,
+            ))
             # Limit history depth
             if len(self._buffer_history) > 5:
                 self._buffer_history.pop(0)
+
+    def _reset_word_state(self):
+        """Clear all per-word state for a new word."""
+        self.buffer.clear()
+        self._last_transform = None
+        self._raw_keystrokes.clear()
+        self._has_transforms = False
+
+    def _check_and_restore(self):
+        """Check if the current word is non-Vietnamese and should be restored.
+
+        Returns (backspace_count, replacement_text) if restore is needed,
+        or None if the word is valid Vietnamese / no transforms were applied.
+        """
+        if not config.vietnamese_mode:
+            return None
+        if not self.buffer or not self._has_transforms:
+            return None
+
+        # Check if the buffer already matches the raw keystrokes (no visible change)
+        raw_text = ''.join(self._raw_keystrokes)
+        current_text = ''.join(self.buffer)
+        if raw_text == current_text:
+            return None
+
+        # Check if the completed word is a valid Vietnamese syllable
+        if vn_validator.is_complete_vietnamese(self.buffer):
+            return None
+
+        # Not valid Vietnamese — restore original keystrokes
+        backspace_count = len(current_text)
+        return (backspace_count, raw_text)
 
     def _check_toggle(self):
         """Check if the configured switch key is pressed."""
@@ -182,6 +223,9 @@ class KeyboardHandler:
         config.vietnamese_mode = not config.vietnamese_mode
         config.default_mode = config.vietnamese_mode
         self.buffer.clear()
+        self._raw_keystrokes.clear()
+        self._has_transforms = False
+        self._last_transform = None
         self._pressed_keys.clear()
         if config.beep_on_switch:
             freq = 800 if config.vietnamese_mode else 400

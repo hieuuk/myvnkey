@@ -211,3 +211,6 @@ desktop.ini
 
 # Release artifacts
 *.zip
+
+# Third-party reference source code
+x-unikey-1.0.4/
