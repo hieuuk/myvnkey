@@ -80,22 +80,33 @@ class KeyboardHandler:
                     if self.buffer:
                         old_buffer = self.buffer[:]
                         self.buffer.pop()
-                        if self._raw_keystrokes:
-                            self._raw_keystrokes.pop()
+                        # User is manually editing — abandon restore tracking
+                        # so deleted characters are never resurrected on word break.
+                        self._raw_keystrokes = list(self.buffer)
+                        self._has_transforms = False
+                        self._last_transform = None
                         # Reposition tone if needed after deletion
                         reposition = self._reposition_tone_after_delete(old_buffer, self.buffer)
                         if reposition:
                             total_bs, new_text = reposition
                             need_replace = True
-                    elif self._buffer_history:
-                        # Backspace on empty buffer: user deleted back into
-                        # the previous word — restore its context.
-                        self.buffer, self._last_transform, self._raw_keystrokes, self._has_transforms = self._buffer_history.pop()
+                    else:
+                        # Buffer already empty — clear history too.
+                        # Don't restore from history: with a non-suppressed
+                        # hook we can't track the cursor, so history goes
+                        # stale and causes wrong transforms/restores.
+                        self._buffer_history.clear()
                 elif key in (Key.enter, Key.tab, Key.space):
-                    restore_result = self._check_and_restore()
-                    if restore_result:
-                        total_bs, new_text = restore_result
-                        need_replace = True
+                    if key == Key.space:
+                        # Only restore on space — Enter/Tab have side effects
+                        # (send message, switch focus) that make backspace
+                        # + retype unreliable.
+                        restore_result = self._check_and_restore()
+                        if restore_result:
+                            bs, txt = restore_result
+                            total_bs = bs + 1
+                            new_text = txt + ' '
+                            need_replace = True
                     self._push_history()
                     self._reset_word_state()
                 else:
@@ -109,7 +120,9 @@ class KeyboardHandler:
                 # Word-break character: check restore before clearing
                 restore_result = self._check_and_restore()
                 if restore_result:
-                    total_bs, new_text = restore_result
+                    bs, txt = restore_result
+                    total_bs = bs + 1
+                    new_text = txt + char
                     need_replace = True
                 self._push_history()
                 self._reset_word_state()
@@ -143,6 +156,13 @@ class KeyboardHandler:
                     self._last_transform = transform_info
                     if transform_info is not None:
                         self._has_transforms = True
+                    else:
+                        # bs>0 with no info = undo/cancel (e.g. tone-cancel,
+                        # vowel undo, đ undo). The trigger key is consumed,
+                        # not a literal — drop it from raw_keystrokes so
+                        # word-break restore doesn't resurrect it.
+                        if self._raw_keystrokes:
+                            self._raw_keystrokes.pop()
                     total_bs = backspace_count + 1
 
                     diff_start = len(old_buffer) - backspace_count

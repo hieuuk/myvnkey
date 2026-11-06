@@ -182,11 +182,18 @@ def find_tone_target(buffer):
 
 def _find_vowel_for_transform(buffer, trigger_lower):
     """Find the rightmost vowel in buffer that can be transformed by the trigger key.
+    For vowel triggers (a/e/o), require contiguous trailing vowels — stops at
+    the first consonant, so "mana"+a does NOT transform.
+    For 'w' (consonant trigger), allow skipping past consonants so "duongw"
+    correctly produces "dương".
     Returns (index, base_lower, tone_idx, was_upper) or None.
     """
+    stop_at_consonant = trigger_lower in ('a', 'e', 'o')
     for i in range(len(buffer) - 1, -1, -1):
         info = get_base_and_tone(buffer[i])
         if info is None:
+            if stop_at_consonant:
+                return None
             continue
         base_lower, tone_idx, was_upper = info
         if (base_lower, trigger_lower) in VOWEL_TRANSFORMS:
@@ -320,14 +327,25 @@ def process_key(buffer, key):
                 new_base = VOWEL_TRANSFORMS[(base_lower, key_lower)]
                 new_char = apply_tone(new_base, tone_idx, was_upper)
                 new_buffer = buffer[:idx] + [new_char] + buffer[idx + 1:]
+                # Special: 'w' on 'uo' or 'uô' transforms BOTH -> 'ươ'
+                # (e.g., "nguow" -> "ngươ", "nguoiw" handled too)
+                replace_idx = idx
+                if key_lower == 'w' and base_lower == 'o' and idx >= 1:
+                    prev_info = get_base_and_tone(new_buffer[idx - 1])
+                    if prev_info and prev_info[0] == 'u':
+                        u_char = apply_tone('ư', prev_info[1], prev_info[2])
+                        new_buffer = new_buffer[:idx - 1] + [u_char] + new_buffer[idx:]
+                        replace_idx = idx - 1
                 if _validate_buffer(new_buffer):
-                    return (new_buffer, len(buffer) - idx, {'key': key, 'old_buffer': buffer[:]})
+                    return (new_buffer, len(buffer) - replace_idx, {'key': key, 'old_buffer': buffer[:]})
 
-    # --- Handle 'w' transforming u->ư or o->ơ anywhere in the word ---
+    # --- Handle 'w' transforming u->ư or o->ơ on contiguous trailing vowels ---
     if key_lower == 'w' and buffer:
-        # Look for the rightmost u or o that can be transformed
+        # Look for the rightmost u or o, stop at first consonant
         for i in range(len(buffer) - 1, -1, -1):
             info = get_base_and_tone(buffer[i])
+            if info is None:
+                break
             if info:
                 base_lower, tone_idx, was_upper = info
                 if (base_lower, 'w') in VOWEL_TRANSFORMS:
