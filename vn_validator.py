@@ -274,6 +274,14 @@ def _is_valid_nucleus(nucleus_base, allow_prefix=True):
     return False
 
 
+# Common Vietnamese abbreviations/shorthand that use Telex transforms
+# but aren't valid syllables (e.g., "đc" = "được", "đk" = "điều kiện").
+# Stored as lowercase for matching.
+_VN_ABBREVIATIONS = {
+    'đc', 'đk', 'đt', 'đh', 'đb', 'đg',
+}
+
+
 def is_complete_vietnamese(buffer):
     """Check if the buffer forms a complete valid Vietnamese syllable.
 
@@ -288,6 +296,11 @@ def is_complete_vietnamese(buffer):
     Used at word boundaries to decide whether to restore original keystrokes.
     """
     if not buffer:
+        return True
+
+    # Check Vietnamese abbreviations whitelist
+    word_lower = ''.join(c.lower() for c in buffer)
+    if word_lower in _VN_ABBREVIATIONS:
         return True
 
     initial, vowel, final = parse_syllable(buffer)
